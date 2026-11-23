@@ -1,0 +1,83 @@
+// Contract rule language of the Autonomic Job Engine.
+// Drools-like: package / import / global declarations and
+//   rule "name" <attributes> when <conditions> then <actions> end
+
+start: _item*
+
+_item: package_decl
+     | import_decl
+     | global_decl
+     | rule
+
+package_decl: "package" qname ";"?
+import_decl: "import" qname ";"?
+global_decl: "global" NAME? NAME "=" expr ";"
+qname: NAME ("." NAME)*
+
+rule: "rule" STRING rule_attr* "when" condition* "then" action* "end"
+
+rule_attr: "salience" NEG? NUMBER                 -> salience
+         | NO_LOOP [bool_lit]                    -> no_loop
+         | "cooldown" STRING                     -> cooldown
+         | ACTIVATION_GROUP STRING               -> activation_group
+         | "enabled" bool_lit                    -> enabled
+
+bool_lit: "true"                                 -> true
+        | "false"                                -> false
+
+condition: pattern
+         | "not" pattern                         -> not_ce
+         | "exists" pattern                      -> exists_ce
+         | "eval" "(" expr ")"                   -> eval_ce
+
+pattern: [VAR ":"] NAME "(" [constraint ("," constraint)*] ")"
+
+constraint: VAR ":" NAME                         -> field_binding
+          | expr                                 -> test
+
+action: NAME "(" [expr ("," expr)*] ")" ";"
+
+?expr: or_expr
+?or_expr: and_expr
+        | or_expr ("||" | "or") and_expr         -> or_
+?and_expr: not_expr
+         | and_expr ("&&" | "and") not_expr      -> and_
+?not_expr: cmp_expr
+         | "!" not_expr                          -> not_
+?cmp_expr: sum_expr
+         | sum_expr COMP sum_expr                -> cmp
+?sum_expr: prod_expr
+         | sum_expr ADDOP prod_expr              -> bin
+?prod_expr: unary
+          | prod_expr MULOP unary                -> bin
+?unary: postfix
+      | NEG unary                                -> neg
+?postfix: primary
+        | postfix "." NAME                       -> attr
+?primary: NUMBER                                 -> number
+        | STRING                                 -> string
+        | "true"                                 -> true
+        | "false"                                -> false
+        | "null"                                 -> null
+        | VAR                                    -> var
+        | NAME                                   -> name
+        | NAME "(" [expr ("," expr)*] ")"        -> call
+        | "(" expr ")"
+
+NO_LOOP.2: "no-loop"
+ACTIVATION_GROUP.2: "activation-group"
+NEG: "-"
+COMP: "==" | "!=" | "<=" | ">=" | "<" | ">"
+ADDOP: "+" | "-"
+MULOP: "*" | "/" | "%"
+VAR: /\$[A-Za-z_][A-Za-z0-9_]*/
+NAME: /[A-Za-z_][A-Za-z0-9_]*/
+NUMBER: /\d+(\.\d+)?([eE][+-]?\d+)?/
+STRING: /"(\\.|[^"\\])*"/
+
+LINE_COMMENT: /(\/\/|#)[^\n]*/
+BLOCK_COMMENT: /\/\*(.|\n)*?\*\//
+%import common.WS
+%ignore WS
+%ignore LINE_COMMENT
+%ignore BLOCK_COMMENT

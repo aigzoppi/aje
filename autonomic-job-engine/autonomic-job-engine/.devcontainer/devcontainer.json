@@ -1,0 +1,33 @@
+{
+  "name": "autonomic-job-engine",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "moby": true,
+      "dockerDashComposeVersion": "v2"
+    }
+  },
+  "remoteUser": "vscode",
+  "forwardPorts": [8000],
+  "postCreateCommand": "uv venv /home/vscode/.venv && uv pip install --python /home/vscode/.venv/bin/python -e '.[dev,worker]'",
+  "containerEnv": {
+    "VIRTUAL_ENV": "/home/vscode/.venv",
+    "PATH": "/home/vscode/.venv/bin:${containerEnv:PATH}"
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/home/vscode/.venv/bin/python"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-azuretools.vscode-docker",
+        "charliermarsh.ruff",
+        "ryanluker.vscode-coverage-gutters"
+      ]
+    }
+  }
+}

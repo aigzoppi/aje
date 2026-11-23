@@ -1,0 +1,57 @@
+package examples.farm
+
+// A latency SLA for an interactive farm, with protection against poison input.
+// Submit with:  "contract": {"source": "<this file>", "globals": {"latency_sla": 5}}
+
+global double latency_sla      = 10.0;  // p95 seconds from submission to result
+global double max_failure_rate = 0.5;   // above this the input is probably bad
+global int    step             = 2;
+
+// Protection: stop burning resources on a stream that mostly fails.
+rule "protect: suspend on failure storm"
+    salience 100
+    activation-group "decision"
+when
+    $j : Job( status == "running" )
+    $m : Metrics( failure_rate > max_failure_rate, completed + failed > 20 )
+then
+    suspend();
+    log("failure rate {} > {}: job suspended, inspect failed tasks then resume", $m.failure_rate, max_failure_rate);
+end
+
+// Optimisation: SLA violated and work is waiting -> add capacity in steps.
+rule "sla: add capacity"
+    salience 50
+    cooldown "15s"
+    activation-group "decision"
+when
+    $j : Job( status == "running", workers < max_workers )
+    $m : Metrics( p95_latency > latency_sla, queue_depth > 0 )
+then
+    scale_up(min(step, $j.max_workers - $j.workers));
+    log("p95 {}s > SLA {}s with {} queued", $m.p95_latency, latency_sla, $m.queue_depth);
+end
+
+// Budget-aware: we want more but the group said no -> ask explicitly.
+rule "sla: ask the group"
+    salience 40
+    cooldown "30s"
+when
+    $j : Job( status == "running", budget_free == 0, workers < max_workers )
+    Metrics( p95_latency > latency_sla * 2 )
+then
+    escalate("latency", step);
+end
+
+// Optimisation: comfortably inside the SLA -> give capacity back.
+rule "sla: release capacity"
+    salience 10
+    cooldown "30s"
+    activation-group "decision"
+when
+    $j : Job( status == "running", workers > min_workers )
+    Metrics( queue_depth == 0, avg_utilisation < 0.3 )
+    eval( $j.workers > 1 )
+then
+    scale_down(1);
+end

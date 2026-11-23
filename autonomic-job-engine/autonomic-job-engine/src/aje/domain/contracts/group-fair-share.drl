@@ -1,0 +1,42 @@
+package aje.builtin.group
+
+// Default contract of a job group: share a worker budget among members.
+// A member whose scaling is clipped by the budget raises an Escalation
+// (reason "budget", amount = workers still missing). The group manager answers
+// by granting free budget or by reclaiming workers from idle members; the
+// escalation disappears once the member reaches the size it asked for.
+
+global int reclaim_idle_after = 20; // seconds a member must be idle before giving workers back
+
+rule "grant free budget"
+    salience 20
+when
+    $g : Group( status == "running", free > 0 )
+    $e : Escalation( )
+    $j : JobStat( id == $e.job_id, status == "running", workers < max_workers )
+then
+    scale_job($j.id, $j.workers + min($e.amount, $g.free));
+    log("granted up to {} worker(s) to {}", min($e.amount, $g.free), $j.name);
+end
+
+rule "reclaim from idle members"
+    salience 10
+    cooldown "10s"
+when
+    exists Escalation( reason == "budget" )
+    $idle : JobStat( outstanding == 0, idle_seconds > reclaim_idle_after, workers > min_workers )
+then
+    scale_job($idle.id, $idle.min_workers);
+    log("reclaimed workers from idle member {}", $idle.name);
+end
+
+rule "reclaim from under-used members"
+    salience 5
+    cooldown "20s"
+when
+    exists Escalation( reason == "budget" )
+    $slack : JobStat( queue_depth == 0, avg_utilisation < 0.5, workers > min_workers )
+then
+    scale_job($slack.id, $slack.workers - 1);
+    log("took one worker from under-used member {}", $slack.name);
+end

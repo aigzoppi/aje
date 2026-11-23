@@ -1,0 +1,46 @@
+# Namespace and permissions the engine needs on the cluster.
+# Bind the Role to the identity used in the kubeconfig given to the API
+# (or to the API's ServiceAccount when it runs in-cluster with AJE_K8S_IN_CLUSTER=true).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aje-jobs
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: autonomic-job-engine
+  namespace: aje-jobs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: autonomic-job-engine
+  namespace: aje-jobs
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs/status"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autonomic-job-engine
+  namespace: aje-jobs
+subjects:
+  - kind: ServiceAccount
+    name: autonomic-job-engine
+    namespace: aje-jobs
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: autonomic-job-engine

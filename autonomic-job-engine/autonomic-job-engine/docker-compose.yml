@@ -1,0 +1,107 @@
+# Autonomic Job Engine: API + RabbitMQ + PostgreSQL.
+#
+#   docker compose up --build
+#   open http://localhost:8000/docs
+#
+# By default workers run as local processes inside the API container
+# (AJE_BACKEND=local), so the whole stack works without a cluster.
+# To run workers as Kubernetes Jobs, add the override file:
+#   docker compose -f docker-compose.yml -f docker-compose.k8s.yml up --build
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-aje}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-aje}
+    ports:
+      - "5672:5672"     # AMQP (workers in a cluster must be able to reach this)
+      - "15672:15672"   # management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aje}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aje}
+      POSTGRES_DB: aje
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aje} -d aje"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Applies the database migrations (python -m aje.migrate), then exits. The API starts after it.
+  migrate:
+    build: .
+    image: aje-api:latest
+    command: ["python", "-m", "aje.migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AJE_DATABASE_URL: postgresql://${POSTGRES_USER:-aje}:${POSTGRES_PASSWORD:-aje}@postgres:5432/aje
+      AJE_LOG_LEVEL: ${AJE_LOG_LEVEL:-INFO}
+    restart: "no"
+
+  api:
+    build: .
+    image: aje-api:latest
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      AJE_DATABASE_URL: postgresql://${POSTGRES_USER:-aje}:${POSTGRES_PASSWORD:-aje}@postgres:5432/aje
+      AJE_DB_AUTO_CREATE: "false"   # the schema belongs to the migrations
+      AJE_DB_POOL_SIZE: ${AJE_DB_POOL_SIZE:-10}   # asyncpg connections held by the API
+      # Data plane for jobs with jobcontext.datastore: local workers inherit this variable.
+      # Same server for convenience; keep job data in its own schema (e.g. "dataplane").
+      AJE_DATASTORE_DSN: postgresql://${POSTGRES_USER:-aje}:${POSTGRES_PASSWORD:-aje}@postgres:5432/aje
+      AJE_AMQP_URL: amqp://${RABBITMQ_USER:-aje}:${RABBITMQ_PASSWORD:-aje}@rabbitmq:5672/
+      AJE_BACKEND: ${AJE_BACKEND:-local}
+      AJE_MONITOR_INTERVAL: ${AJE_MONITOR_INTERVAL:-5}
+      AJE_MONITOR_WINDOW: ${AJE_MONITOR_WINDOW:-60}
+      AJE_API_KEY: ${AJE_API_KEY:-}
+      AJE_LOG_LEVEL: ${AJE_LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  # Fractal Lab demo UI (examples/demo):  docker compose --profile demo up --build
+  #   open http://localhost:8080
+  demo-ui:
+    profiles: ["demo"]
+    build: ./examples/demo
+    image: aje-demo-ui:latest
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # Builds the worker base image used by Kubernetes Jobs:
+  #   docker compose --profile build build worker-image
+  worker-image:
+    profiles: ["build"]
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    image: ${AJE_WORKER_IMAGE:-aje-worker:latest}
+
+volumes:
+  rabbitmq-data:
+  postgres-data:

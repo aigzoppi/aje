@@ -1,0 +1,59 @@
+package aje.builtin.farm
+
+// Default self-optimising contract for the farm pattern.
+// Keep the backlog per worker and the task latency under control, and give
+// workers back when the farm is idle. Override any global with
+// contract.globals in the job request.
+
+global int    backlog_per_worker = 5;    // queued tasks tolerated per worker
+global double target_latency     = 30.0; // seconds from enqueue to result
+global double low_utilisation    = 0.4;  // below this the farm is over-provisioned
+global int    idle_after         = 30;   // seconds without activity before shrinking
+
+rule "grow fast on backlog"
+    salience 30
+    cooldown "10s"
+    activation-group "scaling"
+when
+    $j : Job( status == "running", workers < max_workers )
+    $m : Metrics( queue_depth > backlog_per_worker * $j.workers )
+then
+    scale(min($j.max_workers, max($j.workers * 2, ceil($m.queue_depth / backlog_per_worker))));
+    log("backlog {} exceeds {} per worker: scaling from {} workers", $m.queue_depth, backlog_per_worker, $j.workers);
+end
+
+rule "grow on latency"
+    salience 20
+    cooldown "15s"
+    activation-group "scaling"
+when
+    $j : Job( status == "running", workers < max_workers )
+    $m : Metrics( avg_latency > target_latency, queue_depth > 0 )
+then
+    scale_up(1);
+    log("latency {}s above target {}s: adding a worker", round($m.avg_latency, 2), target_latency);
+end
+
+rule "shrink when under-used"
+    salience 10
+    cooldown "20s"
+    activation-group "scaling"
+when
+    $j : Job( status == "running", workers > min_workers )
+    Metrics( queue_depth == 0, avg_utilisation < low_utilisation, elapsed > 20 )
+then
+    scale_down(1);
+    log("utilisation below {}: releasing a worker", low_utilisation);
+end
+
+rule "shrink to minimum when idle"
+    salience 5
+    cooldown "30s"
+    activation-group "scaling"
+when
+    $j : Job( workers > min_workers )
+    Metrics( outstanding == 0, idle_seconds > idle_after )
+then
+    scale($j.min_workers);
+    log("idle for more than {}s: back to {} worker(s)", idle_after, $j.min_workers);
+end

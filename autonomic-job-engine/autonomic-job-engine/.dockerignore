@@ -1,0 +1,11 @@
+.git
+__pycache__
+*.pyc
+*.db
+.env
+.pytest_cache
+.hypothesis
+.ruff_cache
+src/__tests__
+examples/demo/node_modules
+examples/demo/dist

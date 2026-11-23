@@ -1,0 +1,36 @@
+package examples.data_parallel
+
+// Each batch must be gathered within a deadline.
+// Self-configuration: keep partitions proportional to workers.
+// Self-optimisation: when a batch misses the deadline, add workers.
+
+global double deadline    = 20.0;
+global int    granularity = 3;      // partitions per worker
+
+rule "partitions follow workers"
+    salience 20
+when
+    $j : Job( partitions != workers * granularity )
+then
+    set_partitions($j.workers * granularity);
+end
+
+rule "missed deadline"
+    salience 10
+    cooldown "20s"
+when
+    $j : Job( status == "running", workers < max_workers )
+    $m : Metrics( last_batch_time > deadline )
+then
+    scale(min($j.max_workers, $j.workers + ceil($m.last_batch_time / deadline)));
+    log("batch took {}s, deadline {}s", $m.last_batch_time, deadline);
+end
+
+rule "nothing to do"
+    cooldown "60s"
+when
+    $j : Job( workers > min_workers )
+    Metrics( pending_batches == 0, idle_seconds > 120 )
+then
+    scale($j.min_workers);
+end

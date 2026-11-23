@@ -1,0 +1,69 @@
+package aje.builtin.data_parallel
+
+// Default self-configuring contract for the data-parallel pattern.
+// Workers pull partitions from the queue, so finer partitions balance load
+// better; partition changes only apply to the next batch (a safe point).
+
+global int    partitions_per_worker = 2;   // keep enough slices to feed every worker
+global int    max_partitions        = 64;
+global double skew_limit            = 2.5; // slowest / fastest partition
+global double target_batch_time     = 60.0;
+global int    idle_after            = 30;
+
+rule "enough partitions for the workers"
+    salience 40
+    activation-group "partitioning"
+when
+    $j : Job( partitions < workers )
+then
+    set_partitions(min(max_partitions, $j.workers * partitions_per_worker));
+    log("{} partitions cannot feed {} workers: re-partitioning", $j.partitions, $j.workers);
+end
+
+rule "split finer on skew"
+    salience 30
+    cooldown "30s"
+    activation-group "partitioning"
+when
+    $j : Job( partitions < max_partitions )
+    $m : Metrics( partition_skew > skew_limit )
+then
+    set_partitions(min(max_partitions, $j.partitions * 2));
+    log("partition skew {} > {}: doubling partitions", round($m.partition_skew, 2), skew_limit);
+end
+
+rule "grow when partitions wait"
+    salience 20
+    cooldown "10s"
+    activation-group "scaling"
+when
+    $j : Job( status == "running", workers < max_workers )
+    Metrics( queue_depth > $j.workers )
+then
+    scale(min($j.max_workers, $j.workers * 2));
+    log("partitions waiting for workers: scaling from {}", $j.workers);
+end
+
+rule "grow when batches are slow"
+    salience 15
+    cooldown "30s"
+    activation-group "scaling"
+when
+    $j : Job( status == "running", workers < max_workers )
+    $m : Metrics( last_batch_time > target_batch_time, pending_batches > 0 )
+then
+    scale_up(1);
+    log("last batch took {}s (target {}s): adding a worker", round($m.last_batch_time, 1), target_batch_time);
+end
+
+rule "shrink when idle"
+    salience 5
+    cooldown "30s"
+    activation-group "scaling"
+when
+    $j : Job( workers > min_workers )
+    Metrics( pending_batches == 0, idle_seconds > idle_after )
+then
+    scale($j.min_workers);
+    log("no pending batches for {}s: back to {} worker(s)", idle_after, $j.min_workers);
+end

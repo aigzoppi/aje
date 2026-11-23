@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autonomic-job-engine"
+version = "0.1.0"
+description = "Self-managing farm and data-parallel jobs on Kubernetes, driven by rule-based contracts"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "asyncpg>=0.29",  # control plane: the engine's own tables, through a connection pool
+    "aio-pika>=9.4",
+    "msgpack>=1.0",  # wire format of every RabbitMQ message (aje_worker.protocol)
+    "kubernetes_asyncio>=29.0",
+    "lark>=1.1",
+    "prometheus-client>=0.20",
+    "sse-starlette>=2.0",
+    "croniter>=2.0",
+    "tzdata>=2024.1",
+    "psycopg[binary]>=3.2",  # data plane: workers (also local ones in the API image) talk to PostgreSQL
+]
+
+[project.optional-dependencies]
+worker = ["aio-pika>=9.4", "msgpack>=1.0", "pydantic>=2.6", "psycopg[binary]>=3.2"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "hypothesis>=6", "httpx>=0.27",
+       "testcontainers[postgres,rabbitmq]>=4.8", "ruff>=0.8", "pylint>=3.3"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["aje*", "aje_worker*"]
+
+[tool.setuptools.package-data]
+aje = ["domain/dsl/*.lark", "domain/contracts/*.drl"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+python_classes = ["*Test"]  # Google naming: FooTest
+testpaths = ["src/__tests__"]
+pythonpath = ["src", "src/__tests__"]
+markers = ["integration: needs Docker (PostgreSQL and RabbitMQ in Testcontainers)"]
+
+# ---------------------------------------------------------------------------- style
+# Google Python Style Guide (https://google.github.io/styleguide/pyguide.html), with one
+# project exception: lines may be 110 characters (the guide says 80).
+#   * ruff format   formatting (Black-compatible, like Google's pyink)
+#   * ruff check    the rules below, each mapped to its guide section
+#   * pylint        Google's own pylintrc (./pylintrc, section 2.1)
+#   * src/__tests__/unit/test_style.py   rules no linter covers (2.2 modules-only imports, 2.17)
+[tool.ruff]
+line-length = 110
+src = ["src", "src/__tests__"]
+target-version = "py311"
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # 3.1-3.6 pycodestyle: semicolons, line length, indentation, blank lines, whitespace
+    "F",         # 2.1 pyflakes: unused imports/variables, undefined names
+    "I",         # 3.13 import formatting and grouping
+    "N",         # 3.16 naming
+    "D",         # 3.8 docstring format, Google convention (presence is checked by pylint)
+    "UP",        # 2.20 / 3.19 modern Python and annotations (X | None, builtin generics)
+    "B",         # 2.12 mutable defaults, 2.16 loop-variable capture, misc. bug patterns
+    "C4",        # 2.7 comprehensions
+    "G",         # 3.10.1 logging: pattern strings, no f-strings
+    "Q",         # 3.10 consistent quotes
+    "SIM118",    # 2.8 iterate dicts directly, not .keys()
+    "PLC1802",   # 2.14 implicit false: `if seq`, not `if len(seq)`
+    "TID252",    # 2.2.4 / 2.3 no relative imports
+    "S101",      # 2.4.4 no assert for runtime checks (allowed in tests)
+]
+ignore = [
+    "D1",        # missing docstrings: pylint applies the guide's exemptions (docstring-min-length)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/__tests__/**" = ["S101"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.isort]
+# 3.13: one import per line (typing / collections.abc excepted), grouped stdlib / third
+# party / first party, sorted by full module path ignoring case.
+known-first-party = ["aje", "aje_worker", "common"]
+force-single-line = true
+force-sort-within-sections = true
+single-line-exclusions = ["typing", "collections.abc", "typing_extensions"]
+order-by-type = false
+case-sensitive = false

@@ -1,0 +1,20 @@
+# Override: run workers as Kubernetes Jobs instead of local processes.
+#
+#   export AJE_WORKER_AMQP_URL=amqp://aje:aje@<address reachable from the cluster>:5672/
+#   docker compose -f docker-compose.yml -f docker-compose.k8s.yml up --build
+#
+# The API reads ~/.kube/config (mounted read-only). For kind/minikube clusters,
+# make sure the server address in the kubeconfig is reachable from the container
+# (e.g. use host.docker.internal instead of 127.0.0.1).
+services:
+  api:
+    environment:
+      AJE_BACKEND: kubernetes
+      AJE_K8S_NAMESPACE: ${AJE_K8S_NAMESPACE:-aje-jobs}
+      AJE_K8S_KUBECONFIG: /home/aje/.kube/config
+      AJE_WORKER_AMQP_URL: ${AJE_WORKER_AMQP_URL:?set AJE_WORKER_AMQP_URL to a RabbitMQ address reachable from the cluster}
+      AJE_K8S_IMAGE_PULL_SECRET: ${AJE_K8S_IMAGE_PULL_SECRET:-}
+    volumes:
+      - ${KUBECONFIG_PATH:-~/.kube/config}:/home/aje/.kube/config:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
